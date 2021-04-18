@@ -42,6 +42,7 @@ struct PreparedSubmitNodeMeshData {
     // we can get the mesh via the frame node index
     frame_node_index: FrameNodeIndex,
     mesh_part_index: usize,
+    sort_key: u32,
 }
 
 impl std::fmt::Debug for PreparedSubmitNodeMeshData {
@@ -77,6 +78,7 @@ impl MeshWriteJob {
         per_instance_descriptor_set: DescriptorSetArc,
         mesh_part_index: usize,
         material_pass_resource: ResourceArc<MaterialPassResource>,
+        sort_key: u32,
     ) -> usize {
         let submit_node_index = self.prepared_submit_node_mesh_data.len();
         self.prepared_submit_node_mesh_data
@@ -87,6 +89,7 @@ impl MeshWriteJob {
                 per_instance_descriptor_set,
                 frame_node_index: view_node.frame_node_index(),
                 mesh_part_index,
+                sort_key,
             });
         submit_node_index
     }
@@ -123,60 +126,77 @@ impl WriteJob for MeshWriteJob {
             .as_ref()
             .unwrap();
 
-        let pipeline = write_context
-            .resource_context
-            .graphics_pipeline_cache()
-            .get_or_create_graphics_pipeline(
-                render_phase_index,
-                &render_node_data.material_pass_resource,
-                &write_context.render_target_meta,
-                &*MESH_VERTEX_LAYOUT,
+        if ((render_node_data.sort_key >> 24) & 0xFF)
+            != ((write_context.last_sort_key >> 24) & 0xFF)
+        {
+            let pipeline = write_context
+                .resource_context
+                .graphics_pipeline_cache()
+                .get_or_create_graphics_pipeline(
+                    render_phase_index,
+                    &render_node_data.material_pass_resource,
+                    &write_context.render_target_meta,
+                    &*MESH_VERTEX_LAYOUT,
+                )?;
+
+            command_buffer.cmd_bind_pipeline(&pipeline.get_raw().pipeline)?;
+
+            render_node_data
+                .per_view_descriptor_set
+                .bind(command_buffer)?;
+        }
+
+        if ((render_node_data.sort_key >> 16) & 0xFF)
+            != ((write_context.last_sort_key >> 16) & 0xFF)
+        {
+            if let Some(per_material_descriptor_set) = &render_node_data.per_material_descriptor_set
+            {
+                per_material_descriptor_set.bind(command_buffer).unwrap();
+            }
+        }
+
+        if ((render_node_data.sort_key >> 8) & 0xFF) != ((write_context.last_sort_key >> 8) & 0xFF)
+        {
+            command_buffer.cmd_bind_vertex_buffers(
+                0,
+                &[RafxVertexBufferBinding {
+                    buffer: &frame_node_data
+                        .mesh_asset
+                        .inner
+                        .vertex_buffer
+                        .get_raw()
+                        .buffer,
+                    byte_offset: mesh_part.vertex_buffer_offset_in_bytes as u64,
+                }],
             )?;
+        }
 
-        command_buffer.cmd_bind_pipeline(&pipeline.get_raw().pipeline)?;
-
-        render_node_data
-            .per_view_descriptor_set
-            .bind(command_buffer)?;
-
-        // frag shader material data, not present during shadow pass
-        if let Some(per_material_descriptor_set) = &render_node_data.per_material_descriptor_set {
-            per_material_descriptor_set.bind(command_buffer).unwrap();
+        if ((render_node_data.sort_key >> 0) & 0xFF) != ((write_context.last_sort_key >> 0) & 0xFF)
+        {
+            command_buffer.cmd_bind_index_buffer(&RafxIndexBufferBinding {
+                buffer: &frame_node_data
+                    .mesh_asset
+                    .inner
+                    .index_buffer
+                    .get_raw()
+                    .buffer,
+                byte_offset: mesh_part.index_buffer_offset_in_bytes as u64,
+                index_type: RafxIndexType::Uint16,
+            })?;
         }
 
         render_node_data
             .per_instance_descriptor_set
             .bind(command_buffer)?;
 
-        command_buffer.cmd_bind_vertex_buffers(
-            0,
-            &[RafxVertexBufferBinding {
-                buffer: &frame_node_data
-                    .mesh_asset
-                    .inner
-                    .vertex_buffer
-                    .get_raw()
-                    .buffer,
-                byte_offset: mesh_part.vertex_buffer_offset_in_bytes as u64,
-            }],
-        )?;
-
-        command_buffer.cmd_bind_index_buffer(&RafxIndexBufferBinding {
-            buffer: &frame_node_data
-                .mesh_asset
-                .inner
-                .index_buffer
-                .get_raw()
-                .buffer,
-            byte_offset: mesh_part.index_buffer_offset_in_bytes as u64,
-            index_type: RafxIndexType::Uint16,
-        })?;
-
         command_buffer.cmd_draw_indexed(
             mesh_part.index_buffer_size_in_bytes / 2, //sizeof(u16)
             0,
             0,
         )?;
+
+        write_context.last_sort_key = render_node_data.sort_key;
+
         Ok(())
     }
 

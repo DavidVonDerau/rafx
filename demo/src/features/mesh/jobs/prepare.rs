@@ -246,6 +246,11 @@ impl PrepareJob for MeshPrepareJob {
         // Realistically all the materials (for now) have identical layouts so iterating though them
         // like this just avoids hardcoding to find the first mesh's first opaque pass
         //
+        let mut pipeline_id_map = FnvHashMap::default();
+        let mut material_id_map = FnvHashMap::default();
+        let mut vertex_id_map = FnvHashMap::default();
+        let mut index_id_map = FnvHashMap::default();
+
         let mut submit_nodes = FeatureSubmitNodes::default();
         {
             profiling::scope!("lookup per view descriptor set layouts");
@@ -262,6 +267,31 @@ impl PrepareJob for MeshPrepareJob {
                                     [PER_VIEW_DESCRIPTOR_SET_INDEX as usize]
                                     .clone(),
                             );
+
+                            let pipeline_hash =
+                                mesh_part.opaque_pass.material_pass_resource.get_hash();
+                            let num_pipelines = pipeline_id_map.len();
+                            pipeline_id_map
+                                .entry(pipeline_hash)
+                                .or_insert_with(|| num_pipelines + 1);
+
+                            let material_hash = mesh_part.opaque_material_descriptor_set.get_hash();
+                            let num_materials = material_id_map.len();
+                            material_id_map
+                                .entry(material_hash)
+                                .or_insert_with(|| num_materials + 1);
+
+                            let num_vertex = vertex_id_map.len();
+                            let vertex_hash = mesh.mesh_asset.inner.vertex_buffer.get_hash();
+                            vertex_id_map
+                                .entry(vertex_hash)
+                                .or_insert_with(|| num_vertex + 1);
+
+                            let num_index = index_id_map.len();
+                            let index_hash = mesh.mesh_asset.inner.index_buffer.get_hash();
+                            index_id_map
+                                .entry(index_hash)
+                                .or_insert_with(|| num_index + 1);
                         }
                     }
                 }
@@ -564,6 +594,28 @@ impl PrepareJob for MeshPrepareJob {
                             .enumerate()
                         {
                             if let Some(mesh_part) = mesh_part {
+                                let pipeline_id = pipeline_id_map
+                                    .get(&mesh_part.opaque_pass.material_pass_resource.get_hash())
+                                    .unwrap();
+
+                                let material_id = material_id_map
+                                    .get(&mesh_part.opaque_material_descriptor_set.get_hash())
+                                    .unwrap();
+
+                                let vertex_id = vertex_id_map
+                                    .get(&extracted_data.mesh_asset.inner.vertex_buffer.get_hash())
+                                    .unwrap();
+
+                                let index_id = index_id_map
+                                    .get(&extracted_data.mesh_asset.inner.index_buffer.get_hash())
+                                    .unwrap();
+
+                                let sort_key: u32 = (((pipeline_id & 0xFF) << 24)
+                                    | ((material_id & 0xFF) << 16)
+                                    | ((vertex_id & 0xFF) << 8)
+                                    | (index_id & 0xFF))
+                                    as u32;
+
                                 //
                                 // Depth prepass for opaque objects
                                 //
@@ -582,6 +634,9 @@ impl PrepareJob for MeshPrepareJob {
                                             .as_ref()
                                             .unwrap();
 
+                                    let sort_key = (sort_key & 0xFFFF)
+                                        | (((1 & 0xFF) << 24) | ((1 & 0xFF) << 16)); // Mask out the pipeline & material.
+
                                     let depth_prepass_submit_node_index = writer.push_submit_node(
                                         view_node,
                                         per_view_descriptor_set,
@@ -589,11 +644,12 @@ impl PrepareJob for MeshPrepareJob {
                                         per_instance_descriptor_set.clone(),
                                         mesh_part_index,
                                         depth_material.clone(),
+                                        sort_key,
                                     );
 
                                     view_submit_nodes.add_submit_node::<DepthPrepassRenderPhase>(
                                         depth_prepass_submit_node_index as u32,
-                                        0,
+                                        sort_key,
                                         distance,
                                     );
                                 }
@@ -622,11 +678,12 @@ impl PrepareJob for MeshPrepareJob {
                                         per_instance_descriptor_set.clone(),
                                         mesh_part_index,
                                         mesh_part.opaque_pass.material_pass_resource.clone(),
+                                        sort_key,
                                     );
 
                                     view_submit_nodes.add_submit_node::<OpaqueRenderPhase>(
                                         opaque_submit_node_index as u32,
-                                        0,
+                                        sort_key,
                                         distance,
                                     );
                                 }
@@ -651,6 +708,9 @@ impl PrepareJob for MeshPrepareJob {
                                                 .as_ref()
                                                 .unwrap();
 
+                                        let sort_key = (sort_key & 0xFFFF)
+                                            | (((1 & 0xFF) << 24) | ((1 & 0xFF) << 16)); // Mask out the pipeline & material.
+
                                         let submit_node_index = writer.push_submit_node(
                                             view_node,
                                             per_view_descriptor_set,
@@ -658,11 +718,12 @@ impl PrepareJob for MeshPrepareJob {
                                             per_instance_descriptor_set.clone(),
                                             mesh_part_index,
                                             depth_material.clone(),
+                                            sort_key,
                                         );
 
                                         view_submit_nodes.add_submit_node::<ShadowMapRenderPhase>(
                                             submit_node_index as u32,
-                                            0,
+                                            sort_key,
                                             distance,
                                         );
                                     }

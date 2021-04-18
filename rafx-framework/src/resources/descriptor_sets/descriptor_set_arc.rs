@@ -1,5 +1,5 @@
 use super::ManagedDescriptorSet;
-use crate::{DescriptorSetLayoutResource, ResourceArc};
+use crate::{DescriptorSetLayoutResource, ResourceArc, ResourceId};
 use crossbeam_channel::Sender;
 use rafx_api::{RafxCommandBuffer, RafxDescriptorSetHandle, RafxResult};
 use rafx_base::slab::RawSlabKey;
@@ -61,6 +61,13 @@ impl DescriptorSetArc {
         DescriptorSetArc {
             inner: Arc::new(inner),
         }
+    }
+
+    pub fn get_hash(&self) -> ResourceId {
+        let mut hash = 769;
+        hash = u64::wrapping_mul(hash, 193) ^ self.inner.descriptor_set_layout.get_hash().0;
+        hash = u64::wrapping_mul(hash, 193) ^ self.inner.slab_key.index() as u64;
+        ResourceId { 0: hash }
     }
 
     pub fn handle(&self) -> &RafxDescriptorSetHandle {

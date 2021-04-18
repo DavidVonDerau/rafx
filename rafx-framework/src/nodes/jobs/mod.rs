@@ -83,6 +83,7 @@ pub struct RenderJobWriteContext {
     pub resource_context: ResourceContext,
     pub command_buffer: DynCommandBuffer,
     pub render_target_meta: GraphicsPipelineRenderTargetMeta,
+    pub last_sort_key: u32,
 }
 
 impl RenderJobWriteContext {
@@ -96,6 +97,7 @@ impl RenderJobWriteContext {
             resource_context,
             command_buffer,
             render_target_meta,
+            last_sort_key: 0,
         }
     }
 

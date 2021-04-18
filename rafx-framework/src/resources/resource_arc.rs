@@ -8,7 +8,7 @@ use std::sync::{Arc, Weak};
 
 // Hijack ResourceHash for now
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
-pub(crate) struct ResourceId(pub(crate) u64);
+pub struct ResourceId(pub(crate) u64);
 
 //
 // A reference counted object that sends a signal when it's dropped
@@ -162,7 +162,7 @@ where
         self.inner.resource.borrow().resource.clone()
     }
 
-    pub(super) fn get_hash(&self) -> ResourceId {
+    pub fn get_hash(&self) -> ResourceId {
         self.inner.resource.resource_hash
     }
 
